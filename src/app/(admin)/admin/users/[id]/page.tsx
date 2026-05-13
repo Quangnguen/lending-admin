@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Loader2, AlertCircle } from "lucide-react";
 import {
   UserHeader,
   UserTabs,
@@ -22,72 +22,63 @@ import {
   CasesTable,
   UserActivityLog,
   UserDetailTab,
-  mockUserDetail,
 } from "@/components/admin/users/detail";
 
 export default function UserDetailPage() {
   const params = useParams();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<UserDetailTab>("overview");
+  const [user, setUser] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // In real app, fetch user by params.id
   const userId = params.id as string;
-  const user = { ...mockUserDetail, id: userId || mockUserDetail.id };
 
-  const handleBack = () => {
-    router.push("/admin/users");
-  };
+  useEffect(() => {
+    if (!userId) return;
+    setLoading(true);
+    setError(null);
+    fetch(`/api/admin/users/${userId}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success && data.data) {
+          setUser(data.data);
+        } else {
+          setError(data.error || "Không thể tải thông tin người dùng");
+        }
+      })
+      .catch(() => setError("Lỗi kết nối backend"))
+      .finally(() => setLoading(false));
+  }, [userId]);
 
-  const handleEditDetails = () => {
-    console.log("Edit details");
-    // TODO: Open edit modal or navigate to edit page
-  };
+  const handleBack = () => router.push("/admin/users");
 
-  const handleSendMessage = () => {
-    console.log("Send message");
-    // TODO: Open message modal
-  };
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-3 text-foreground-muted">
+        <Loader2 className="w-8 h-8 animate-spin" />
+        <p className="text-sm">Đang tải thông tin người dùng...</p>
+      </div>
+    );
+  }
 
-  const handleResetPassword = () => {
-    console.log("Reset password");
-    // TODO: Trigger password reset
-  };
-
-  const handleViewLogs = () => {
-    setActiveTab("cases");
-  };
-
-  const handleReKYC = () => {
-    console.log("Re-KYC");
-    // TODO: Trigger KYC re-verification
-  };
-
-  const handleLockAccount = () => {
-    console.log("Lock/Unlock account");
-    // TODO: Toggle account lock
-  };
-
-  const handleSuspend = () => {
-    console.log("Suspend/Unsuspend");
-    // TODO: Toggle suspension
-  };
-
-  const handleToggleHighRisk = (value: boolean) => {
-    console.log("High risk:", value);
-    // TODO: Update high risk status
-  };
-
-  const handleViewAllLoans = () => {
-    setActiveTab("loans");
-  };
-
-  const handleViewDocuments = () => {
-    setActiveTab("kyc");
-  };
-
-  const handleViewAllTransactions = () => {
-    setActiveTab("transactions");
-  };
+  if (error || !user) {
+    return (
+      <div className="space-y-4">
+        <button onClick={handleBack} className="flex items-center gap-2 text-sm text-foreground-muted hover:text-foreground">
+          <ArrowLeft className="w-4 h-4" />
+          Quay lại
+        </button>
+        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-6 flex items-start gap-4">
+          <AlertCircle className="w-6 h-6 text-red-500 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="font-medium text-red-700 dark:text-red-400">Không thể tải thông tin</p>
+            <p className="text-sm text-red-600 dark:text-red-500 mt-1">{error}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -97,18 +88,36 @@ export default function UserDetailPage() {
         className="flex items-center gap-2 text-sm text-foreground-muted hover:text-foreground transition-colors"
       >
         <ArrowLeft className="w-4 h-4" />
-        Back to Users
+        Quay lại danh sách
       </button>
+
+      {/* Credit Score Badge (nếu có) */}
+      {user.creditScore > 0 && (
+        <div className="flex items-center gap-3 bg-card-bg border border-card-border rounded-xl px-5 py-3">
+          <span className="text-sm text-foreground-muted">Điểm tín dụng (từ DB):</span>
+          <span className={`text-xl font-bold ${user.creditScore >= 700 ? "text-green-500" : user.creditScore >= 500 ? "text-yellow-500" : "text-red-500"}`}>
+            {user.creditScore}
+          </span>
+          <span className="text-xs text-foreground-muted">/ 1000</span>
+          <span className="px-2 py-0.5 rounded-full text-xs bg-background-tertiary text-foreground-muted">{user.creditRating}</span>
+          {user.loanLimit > 0 && (
+            <span className="text-xs text-foreground-muted ml-2">Hạn mức: <strong>{user.loanLimit} USDT</strong></span>
+          )}
+          {user.creditCalculatedAt && (
+            <span className="text-xs text-foreground-muted ml-auto">
+              Cập nhật: {new Date(user.creditCalculatedAt).toLocaleDateString("vi-VN")}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* User Header */}
       <div className="bg-card-bg border border-card-border rounded-xl p-6">
         <UserHeader
           user={user}
-          onEditDetails={handleEditDetails}
-          onSendMessage={handleSendMessage}
+          onEditDetails={() => {}}
+          onSendMessage={() => {}}
         />
-
-        {/* Tabs */}
         <div className="mt-6">
           <UserTabs activeTab={activeTab} onTabChange={setActiveTab} />
         </div>
@@ -117,38 +126,24 @@ export default function UserDetailPage() {
       {/* Tab Content */}
       {activeTab === "overview" && (
         <div className="grid grid-cols-12 gap-6">
-          {/* Left Column - Stats & Loans */}
           <div className="col-span-8 space-y-6">
-            {/* Stats Cards */}
             <StatsCards stats={user.stats} />
-
-            {/* Loan History Summary */}
-            <LoanHistorySummary loans={user.loanHistory} onViewAll={handleViewAllLoans} />
-
-            {/* Bottom Row - KYC & Transactions */}
+            <LoanHistorySummary loans={user.loanHistory} onViewAll={() => setActiveTab("loans")} />
             <div className="grid grid-cols-2 gap-6">
-              <KYCStatusCard
-                kycDetails={user.kycDetails}
-                onViewDocuments={handleViewDocuments}
-              />
-              <RecentTransactions
-                transactions={user.recentTransactions}
-                onViewAll={handleViewAllTransactions}
-              />
+              <KYCStatusCard kycDetails={user.kycDetails} onViewDocuments={() => setActiveTab("kyc")} />
+              <RecentTransactions transactions={user.recentTransactions} onViewAll={() => setActiveTab("transactions")} />
             </div>
           </div>
-
-          {/* Right Column - Admin Actions & Personal Details */}
           <div className="col-span-4 space-y-6">
             <AdminActions
               isHighRisk={user.isHighRisk}
               status={user.status}
-              onResetPassword={handleResetPassword}
-              onViewLogs={handleViewLogs}
-              onReKYC={handleReKYC}
-              onLockAccount={handleLockAccount}
-              onSuspend={handleSuspend}
-              onToggleHighRisk={handleToggleHighRisk}
+              onResetPassword={() => {}}
+              onViewLogs={() => setActiveTab("cases")}
+              onReKYC={() => {}}
+              onLockAccount={() => {}}
+              onSuspend={() => {}}
+              onToggleHighRisk={() => {}}
             />
             <PersonalDetailsCard details={user.personalDetails} />
           </div>
@@ -157,24 +152,12 @@ export default function UserDetailPage() {
 
       {activeTab === "kyc" && (
         <div className="grid grid-cols-12 gap-6">
-          {/* Left Column - KYC Verification & Loans */}
           <div className="col-span-8 space-y-6">
-            {/* KYC Verification Status */}
-            <KYCVerificationStatus
-              kycLevel={user.kycLevel}
-              verificationItems={user.kycVerificationItems}
-            />
-
-            {/* Active Loans Table */}
+            <KYCVerificationStatus kycLevel={user.kycLevel} verificationItems={user.kycVerificationItems} />
             <ActiveLoansTable loans={user.activeLoans} />
           </div>
-
-          {/* Right Column - Documents & Transactions */}
           <div className="col-span-4 space-y-6">
-            {/* Uploaded Documents */}
             <UploadedDocuments documents={user.uploadedDocuments} />
-
-            {/* Recent Transactions */}
             <KYCTransactionsList transactions={user.recentTransactions} />
           </div>
         </div>
@@ -182,10 +165,7 @@ export default function UserDetailPage() {
 
       {activeTab === "loans" && (
         <div className="space-y-6">
-          {/* Loans Table */}
           <LoansTable loans={user.loanDetails} />
-
-          {/* Loan Summary Cards */}
           <LoanSummaryCards summary={user.loanSummary} />
         </div>
       )}
@@ -196,12 +176,9 @@ export default function UserDetailPage() {
 
       {activeTab === "cases" && (
         <div className="grid grid-cols-12 gap-6">
-          {/* Left Column - Support Cases */}
           <div className="col-span-7">
             <CasesTable cases={user.supportCases} />
           </div>
-
-          {/* Right Column - Activity Log */}
           <div className="col-span-5">
             <UserActivityLog logs={user.activityLogs} />
           </div>

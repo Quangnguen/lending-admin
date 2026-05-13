@@ -1,16 +1,18 @@
-// src/app/(admin)/verifier/page.tsx
+// src/app/(verifier)/verifier/page.tsx
 "use client";
 
+import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import {
-  FileText,
-  CheckCircle,
-  Clock,
-  AlertTriangle,
-  Search,
-  Filter,
-  Eye,
+  FileText, CheckCircle, Clock, AlertTriangle, Eye,
+  Search, Loader2, RefreshCw,
 } from "lucide-react";
+
+function toNum(val: any): number {
+  if (val === null || val === undefined) return 0;
+  if (typeof val === "object" && "$numberDecimal" in val) return parseFloat(val.$numberDecimal);
+  return Number(val) || 0;
+}
 
 interface StatCardProps {
   title: string;
@@ -18,16 +20,23 @@ interface StatCardProps {
   subtitle?: string;
   icon: React.ReactNode;
   color: string;
+  loading?: boolean;
 }
 
-function StatCard({ title, value, subtitle, icon, color }: StatCardProps) {
+function StatCard({ title, value, subtitle, icon, color, loading }: StatCardProps) {
   return (
-    <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
+    <div className="bg-card-bg rounded-xl p-6 shadow-sm border border-card-border">
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-sm text-gray-500 font-medium">{title}</p>
-          <p className="text-2xl font-bold text-gray-900 mt-1">{value}</p>
-          {subtitle && <p className="text-sm text-gray-500 mt-1">{subtitle}</p>}
+          <p className="text-sm text-foreground-muted font-medium">{title}</p>
+          {loading ? (
+            <Loader2 className="w-5 h-5 animate-spin text-foreground-muted mt-2" />
+          ) : (
+            <>
+              <p className="text-2xl font-bold text-foreground mt-1">{value}</p>
+              {subtitle && <p className="text-sm text-foreground-muted mt-1">{subtitle}</p>}
+            </>
+          )}
         </div>
         <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${color}`}>
           {icon}
@@ -37,182 +46,153 @@ function StatCard({ title, value, subtitle, icon, color }: StatCardProps) {
   );
 }
 
-interface CaseItemProps {
+interface LoanCase {
   id: string;
-  applicant: string;
-  amount: string;
-  type: string;
-  priority: "high" | "medium" | "low";
-  submittedAt: string;
+  borrowerName: string;
+  borrowerEmail: string;
+  amount: number;
+  interestRate: number;
+  durationDays: number;
+  purpose: string;
+  status: string;
+  creditScore: number;
+  createdAt: string;
 }
 
-function CaseCard({ id, applicant, amount, type, priority, submittedAt }: CaseItemProps) {
-  const priorityConfig = {
-    high: { label: "Ưu tiên cao", color: "bg-red-100 text-red-700", dot: "bg-red-500" },
-    medium: { label: "Trung bình", color: "bg-yellow-100 text-yellow-700", dot: "bg-yellow-500" },
-    low: { label: "Thấp", color: "bg-green-100 text-green-700", dot: "bg-green-500" },
-  };
-
-  return (
-    <div className="bg-white rounded-lg border border-gray-200 p-4 hover:shadow-md transition-shadow">
-      <div className="flex items-start justify-between mb-3">
-        <div>
-          <p className="font-semibold text-blue-600">{id}</p>
-          <p className="text-sm text-gray-500">{type}</p>
-        </div>
-        <span className={`px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1 ${priorityConfig[priority].color}`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${priorityConfig[priority].dot}`}></span>
-          {priorityConfig[priority].label}
-        </span>
-      </div>
-      <div className="space-y-2">
-        <div className="flex justify-between text-sm">
-          <span className="text-gray-500">Người vay:</span>
-          <span className="font-medium text-gray-900">{applicant}</span>
-        </div>
-        <div className="flex justify-between text-sm">
-          <span className="text-gray-500">Số tiền:</span>
-          <span className="font-medium text-gray-900">{amount}</span>
-        </div>
-        <div className="flex justify-between text-sm">
-          <span className="text-gray-500">Ngày nộp:</span>
-          <span className="text-gray-600">{submittedAt}</span>
-        </div>
-      </div>
-      <div className="mt-4 pt-3 border-t border-gray-100">
-        <button className="w-full flex items-center justify-center gap-2 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
-          <Eye className="w-4 h-4" />
-          Xem chi tiết
-        </button>
-      </div>
-    </div>
-  );
-}
+const statusBadge: Record<string, { label: string; color: string }> = {
+  pending: { label: "Chờ xử lý", color: "bg-warning-light text-warning" },
+  approved: { label: "Đã duyệt", color: "bg-success-light text-success" },
+  rejected: { label: "Từ chối", color: "bg-error-light text-error" },
+  funded: { label: "Đã cấp vốn", color: "bg-info-light text-info" },
+};
 
 export default function VerifierDashboard() {
   const { data: session } = useSession();
+  const [cases, setCases] = useState<LoanCase[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
 
-  const pendingCases: CaseItemProps[] = [
-    { id: "LOAN-001", applicant: "Nguyễn Văn A", amount: "50,000,000 ₫", type: "Vay tiêu dùng", priority: "high", submittedAt: "03/01/2026" },
-    { id: "LOAN-005", applicant: "Hoàng Văn E", amount: "65,000,000 ₫", type: "Vay mua xe", priority: "high", submittedAt: "01/01/2026" },
-    { id: "LOAN-006", applicant: "Vũ Thị F", amount: "30,000,000 ₫", type: "Vay tiêu dùng", priority: "medium", submittedAt: "02/01/2026" },
-    { id: "LOAN-007", applicant: "Đặng Văn G", amount: "150,000,000 ₫", type: "Vay mua nhà", priority: "low", submittedAt: "01/01/2026" },
-  ];
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/dashboard/recent-loans");
+      const data = await res.json();
+      if (data.success && data.data) {
+        setCases(data.data.map((r: any) => ({
+          ...r,
+          amount: toNum(r.amount),
+          interestRate: toNum(r.interestRate),
+          durationDays: toNum(r.durationDays),
+          creditScore: toNum(r.creditScore),
+        })));
+      }
+    } catch (err) {
+      console.error("Failed to fetch:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchData(); }, []);
+
+  const pending = cases.filter((c) => c.status === "pending").length;
+  const approved = cases.filter((c) => c.status === "approved" || c.status === "funded").length;
+
+  const filteredCases = cases.filter((c) =>
+    !search || c.borrowerName.toLowerCase().includes(search.toLowerCase())
+  );
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Bảng điều khiển Verifier</h1>
-        <p className="text-gray-500 mt-1">
-          Xin chào, {session?.user?.email} • Hôm nay bạn có <span className="font-semibold text-blue-600">12 hồ sơ</span> cần xử lý
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">Verifier Dashboard</h1>
+          <p className="text-foreground-muted mt-1">
+            Xin chào, {session?.user?.name || "Verifier"} — Xem xét hồ sơ vay (dữ liệu thực)
+          </p>
+        </div>
+        <button onClick={fetchData} disabled={loading}
+          className="flex items-center gap-2 px-3 py-2 text-sm bg-card-bg border border-card-border rounded-lg hover:bg-background-tertiary disabled:opacity-50">
+          <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} /> Làm mới
+        </button>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <StatCard
-          title="Được giao"
-          value="12"
-          subtitle="hồ sơ cần xử lý"
-          icon={<FileText className="w-6 h-6 text-blue-600" />}
-          color="bg-blue-50"
-        />
-        <StatCard
-          title="Đã xử lý hôm nay"
-          value="5"
-          subtitle="hoàn thành 42%"
-          icon={<CheckCircle className="w-6 h-6 text-green-600" />}
-          color="bg-green-50"
-        />
-        <StatCard
-          title="Đang chờ"
-          value="7"
-          subtitle="chưa xem xét"
-          icon={<Clock className="w-6 h-6 text-yellow-600" />}
-          color="bg-yellow-50"
-        />
-        <StatCard
-          title="Ưu tiên cao"
-          value="3"
-          subtitle="cần xử lý gấp"
-          icon={<AlertTriangle className="w-6 h-6 text-red-600" />}
-          color="bg-red-50"
-        />
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <StatCard title="Tổng hồ sơ" value={cases.length} icon={<FileText className="w-6 h-6 text-info" />} color="bg-info-light" loading={loading} />
+        <StatCard title="Chờ xử lý" value={pending} icon={<Clock className="w-6 h-6 text-warning" />} color="bg-warning-light" loading={loading} />
+        <StatCard title="Đã duyệt" value={approved} icon={<CheckCircle className="w-6 h-6 text-success" />} color="bg-success-light" loading={loading} />
+        <StatCard title="Cần xem xét" value={pending} subtitle="Yêu cầu cần action" icon={<AlertTriangle className="w-6 h-6 text-error" />} color="bg-error-light" loading={loading} />
       </div>
 
-      {/* Search and Filter */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-        <div className="flex flex-col sm:flex-row gap-4">
-          <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Tìm kiếm theo mã hồ sơ, tên người vay..."
-              className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-            />
-          </div>
-          <div className="flex gap-2">
-            <select className="px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none">
-              <option value="">Tất cả loại vay</option>
-              <option value="consumer">Vay tiêu dùng</option>
-              <option value="car">Vay mua xe</option>
-              <option value="house">Vay mua nhà</option>
-            </select>
-            <select className="px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none">
-              <option value="">Tất cả độ ưu tiên</option>
-              <option value="high">Ưu tiên cao</option>
-              <option value="medium">Trung bình</option>
-              <option value="low">Thấp</option>
-            </select>
-            <button className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors flex items-center gap-2">
-              <Filter className="w-4 h-4" />
-              Lọc
-            </button>
-          </div>
+      {/* Search */}
+      <div className="bg-card-bg rounded-xl border border-card-border p-4">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground-muted" />
+          <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
+            placeholder="Tìm kiếm hồ sơ..."
+            className="w-full pl-10 pr-4 py-2.5 bg-input-bg border border-input-border rounded-lg text-foreground text-sm focus:outline-none focus:border-input-focus-border" />
         </div>
       </div>
 
-      {/* Cases Grid */}
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-900">Hồ sơ cần xử lý</h2>
-          <div className="flex items-center gap-2 text-sm text-gray-500">
-            <span>Sắp xếp theo:</span>
-            <select className="border-none bg-transparent font-medium text-gray-700 focus:outline-none cursor-pointer">
-              <option value="priority">Độ ưu tiên</option>
-              <option value="date">Ngày nộp</option>
-              <option value="amount">Số tiền</option>
-            </select>
-          </div>
+      {/* Cases Table */}
+      <div className="bg-card-bg rounded-xl border border-card-border overflow-hidden">
+        <div className="p-4 border-b border-border">
+          <h2 className="text-base font-semibold text-foreground">Hồ sơ vay cần xem xét</h2>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {pendingCases.map((caseItem) => (
-            <CaseCard key={caseItem.id} {...caseItem} />
-          ))}
-        </div>
-      </div>
-
-      {/* My Performance */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Hiệu suất của tôi (Tháng này)</h3>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <div className="text-center">
-            <p className="text-3xl font-bold text-gray-900">127</p>
-            <p className="text-sm text-gray-500 mt-1">Hồ sơ đã xử lý</p>
-          </div>
-          <div className="text-center">
-            <p className="text-3xl font-bold text-green-600">89%</p>
-            <p className="text-sm text-gray-500 mt-1">Tỷ lệ chính xác</p>
-          </div>
-          <div className="text-center">
-            <p className="text-3xl font-bold text-blue-600">2.5h</p>
-            <p className="text-sm text-gray-500 mt-1">Thời gian TB/hồ sơ</p>
-          </div>
-          <div className="text-center">
-            <p className="text-3xl font-bold text-purple-600">#3</p>
-            <p className="text-sm text-gray-500 mt-1">Xếp hạng team</p>
-          </div>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-background-tertiary">
+              <tr>
+                <th className="py-3 px-4 text-left text-xs font-medium text-foreground-muted uppercase">Người vay</th>
+                <th className="py-3 px-4 text-left text-xs font-medium text-foreground-muted uppercase">Số tiền</th>
+                <th className="py-3 px-4 text-left text-xs font-medium text-foreground-muted uppercase">Lãi suất</th>
+                <th className="py-3 px-4 text-left text-xs font-medium text-foreground-muted uppercase">Mục đích</th>
+                <th className="py-3 px-4 text-left text-xs font-medium text-foreground-muted uppercase">Credit Score</th>
+                <th className="py-3 px-4 text-left text-xs font-medium text-foreground-muted uppercase">Trạng thái</th>
+                <th className="py-3 px-4 text-center text-xs font-medium text-foreground-muted uppercase">Thao tác</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={7} className="py-12 text-center text-foreground-subtle">
+                  <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" /> Đang tải...
+                </td></tr>
+              ) : filteredCases.length > 0 ? (
+                filteredCases.map((c) => {
+                  const st = statusBadge[c.status] || { label: c.status, color: "bg-gray-100 text-gray-600" };
+                  return (
+                    <tr key={c.id} className="border-b border-border hover:bg-background-tertiary transition-colors">
+                      <td className="py-3 px-4">
+                        <p className="text-sm font-medium text-foreground">{c.borrowerName}</p>
+                        <p className="text-xs text-foreground-muted">{c.borrowerEmail}</p>
+                      </td>
+                      <td className="py-3 px-4 text-sm font-medium text-foreground">{c.amount.toLocaleString()} USDT</td>
+                      <td className="py-3 px-4 text-sm text-foreground">{c.interestRate}%</td>
+                      <td className="py-3 px-4 text-sm text-foreground-muted">{c.purpose || "—"}</td>
+                      <td className="py-3 px-4">
+                        <span className={`text-sm font-semibold ${c.creditScore >= 700 ? "text-success" : c.creditScore >= 500 ? "text-warning" : "text-foreground-muted"}`}>
+                          {c.creditScore || "—"}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${st.color}`}>{st.label}</span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <button className="p-1.5 hover:bg-primary-light rounded-lg transition-colors text-foreground-muted hover:text-primary">
+                          <Eye className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              ) : (
+                <tr><td colSpan={7} className="py-12 text-center text-foreground-subtle">
+                  <FileText className="w-10 h-10 mx-auto mb-2 opacity-40" /> Chưa có hồ sơ nào
+                </td></tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>

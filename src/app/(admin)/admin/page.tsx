@@ -1,6 +1,7 @@
 // src/app/(admin)/admin/page.tsx
 "use client";
 
+import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import {
   Users,
@@ -16,8 +17,34 @@ import {
   Blocks,
   Banknote,
   PieChart,
+  Loader2,
+  RefreshCw,
 } from "lucide-react";
 
+// ===== Types =====
+interface DashboardStats {
+  requests: { total: number; pending: number; funded: number };
+  loans: { total: number; active: number; repaid: number; overdue: number; defaulted: number };
+  values: { totalDisbursed: number; totalInterest: number; totalRepaid: number };
+  repaymentRate: number;
+  defaultRate: number;
+  totalUsers: number;
+}
+
+interface RecentLoan {
+  id: string;
+  borrowerName: string;
+  borrowerEmail: string;
+  amount: number;
+  interestRate: number;
+  durationDays: number;
+  purpose: string;
+  status: string;
+  creditScore: number;
+  createdAt: string;
+}
+
+// ===== Components =====
 interface StatCardProps {
   title: string;
   value: string | number;
@@ -25,27 +52,36 @@ interface StatCardProps {
   changeType?: "positive" | "negative" | "neutral";
   icon: React.ReactNode;
   color: string;
+  loading?: boolean;
 }
 
-function StatCard({ title, value, change, changeType, icon, color }: StatCardProps) {
+function StatCard({ title, value, change, changeType, icon, color, loading }: StatCardProps) {
   return (
     <div className="bg-card-bg rounded-xl p-6 shadow-sm border border-card-border hover:shadow-md transition-shadow">
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-foreground-muted font-medium">{title}</p>
-          <p className="text-2xl font-bold text-foreground mt-1">{value}</p>
-          {change && (
-            <div className={`flex items-center gap-1 text-sm mt-2 ${
-              changeType === "positive"
-                ? "text-success"
-                : changeType === "negative"
-                ? "text-error"
-                : "text-foreground-muted"
-            }`}>
-              {changeType === "positive" && <ArrowUpRight className="w-3.5 h-3.5" />}
-              {changeType === "negative" && <ArrowDownRight className="w-3.5 h-3.5" />}
-              <span>{change}</span>
+          {loading ? (
+            <div className="flex items-center gap-2 mt-1">
+              <Loader2 className="w-5 h-5 animate-spin text-foreground-muted" />
             </div>
+          ) : (
+            <>
+              <p className="text-2xl font-bold text-foreground mt-1">{value}</p>
+              {change && (
+                <div className={`flex items-center gap-1 text-sm mt-2 ${
+                  changeType === "positive"
+                    ? "text-success"
+                    : changeType === "negative"
+                    ? "text-error"
+                    : "text-foreground-muted"
+                }`}>
+                  {changeType === "positive" && <ArrowUpRight className="w-3.5 h-3.5" />}
+                  {changeType === "negative" && <ArrowDownRight className="w-3.5 h-3.5" />}
+                  <span>{change}</span>
+                </div>
+              )}
+            </>
           )}
         </div>
         <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${color}`}>
@@ -95,7 +131,7 @@ function DonutChart({ segments }: { segments: { label: string; value: number; co
       <div className="relative w-32 h-32 flex-shrink-0">
         <div
           className="w-full h-full rounded-full"
-          style={{ background: gradient }}
+          style={{ background: total > 0 ? gradient : "#e5e7eb" }}
         />
         <div className="absolute inset-3 bg-card-bg rounded-full flex items-center justify-center">
           <div className="text-center">
@@ -117,67 +153,114 @@ function DonutChart({ segments }: { segments: { label: string; value: number; co
   );
 }
 
-interface RecentCaseProps {
-  id: string;
-  applicant: string;
-  amount: string;
-  status: "pending" | "approved" | "rejected" | "review";
-  date: string;
+// ===== Helpers: MongoDB Decimal128 safety =====
+function toNum(val: any): number {
+  if (val === null || val === undefined) return 0;
+  if (typeof val === "object" && "$numberDecimal" in val) return parseFloat(val.$numberDecimal);
+  if (typeof val === "number") return val;
+  return parseFloat(String(val)) || 0;
 }
 
-function RecentCaseRow({ id, applicant, amount, status, date }: RecentCaseProps) {
-  const statusConfig = {
-    pending: { label: "Chờ xử lý", color: "bg-warning-light text-warning" },
-    approved: { label: "Đã duyệt", color: "bg-success-light text-success" },
-    rejected: { label: "Từ chối", color: "bg-error-light text-error" },
-    review: { label: "Đang xét", color: "bg-info-light text-info" },
-  };
-
-  return (
-    <tr className="border-b border-border hover:bg-background-tertiary transition-colors">
-      <td className="py-3 px-4 text-sm font-medium text-primary">{id}</td>
-      <td className="py-3 px-4 text-sm text-foreground">{applicant}</td>
-      <td className="py-3 px-4 text-sm text-foreground font-medium">{amount}</td>
-      <td className="py-3 px-4">
-        <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${statusConfig[status].color}`}>
-          {statusConfig[status].label}
-        </span>
-      </td>
-      <td className="py-3 px-4 text-sm text-foreground-muted">{date}</td>
-    </tr>
-  );
+function formatAmount(amount: any): string {
+  const n = toNum(amount);
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K USDT`;
+  return `${n.toLocaleString()} USDT`;
 }
 
+function formatDate(dateStr: string): string {
+  if (!dateStr) return "—";
+  const d = new Date(dateStr);
+  return d.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+// ===== Status helpers =====
+const statusConfig: Record<string, { label: string; color: string }> = {
+  PENDING: { label: "Chờ xử lý", color: "bg-warning-light text-warning" },
+  pending: { label: "Chờ xử lý", color: "bg-warning-light text-warning" },
+  APPROVED: { label: "Đã duyệt", color: "bg-success-light text-success" },
+  approved: { label: "Đã duyệt", color: "bg-success-light text-success" },
+  FUNDED: { label: "Đã cấp vốn", color: "bg-info-light text-info" },
+  funded: { label: "Đã cấp vốn", color: "bg-info-light text-info" },
+  CANCELLED: { label: "Đã hủy", color: "bg-error-light text-error" },
+  cancelled: { label: "Đã hủy", color: "bg-error-light text-error" },
+  ACTIVE: { label: "Đang hoạt động", color: "bg-info-light text-info" },
+  active: { label: "Đang hoạt động", color: "bg-info-light text-info" },
+  REPAID: { label: "Đã trả nợ", color: "bg-success-light text-success" },
+  repaid: { label: "Đã trả nợ", color: "bg-success-light text-success" },
+  OVERDUE: { label: "Quá hạn", color: "bg-warning-light text-warning" },
+  overdue: { label: "Quá hạn", color: "bg-warning-light text-warning" },
+  DEFAULTED: { label: "Vỡ nợ", color: "bg-error-light text-error" },
+  defaulted: { label: "Vỡ nợ", color: "bg-error-light text-error" },
+};
+
+// ===== Main Dashboard =====
 export default function AdminDashboard() {
   const { data: session } = useSession();
   const role = session?.user?.role;
 
-  const recentCases: RecentCaseProps[] = [
-    { id: "LOAN-001", applicant: "Nguyễn Văn A", amount: "1,000 USDT", status: "pending", date: "13/04/2026" },
-    { id: "LOAN-002", applicant: "Trần Thị B", amount: "2,500 USDT", status: "review", date: "12/04/2026" },
-    { id: "LOAN-003", applicant: "Lê Văn C", amount: "500 USDT", status: "approved", date: "11/04/2026" },
-    { id: "LOAN-004", applicant: "Phạm Thị D", amount: "5,000 USDT", status: "rejected", date: "10/04/2026" },
-    { id: "LOAN-005", applicant: "Hoàng Văn E", amount: "800 USDT", status: "pending", date: "10/04/2026" },
-  ];
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [recentLoans, setRecentLoans] = useState<RecentLoan[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Weekly loan volume data (7 days)
-  const weeklyData = [
-    { label: "T2", value: 3, color: "bg-primary" },
-    { label: "T3", value: 5, color: "bg-primary" },
-    { label: "T4", value: 2, color: "bg-primary" },
-    { label: "T5", value: 7, color: "bg-primary" },
-    { label: "T6", value: 4, color: "bg-primary" },
-    { label: "T7", value: 6, color: "bg-primary" },
-    { label: "CN", value: 1, color: "bg-primary" },
-  ];
+  const fetchData = async () => {
+    setLoading(true);
+    setError(null);
 
-  // Loan status distribution for donut chart
-  const statusDistribution = [
-    { label: "Đang hoạt động", value: 12, color: "#22c55e" },
-    { label: "Đã trả nợ", value: 25, color: "#3b82f6" },
-    { label: "Quá hạn", value: 3, color: "#f59e0b" },
-    { label: "Vỡ nợ", value: 1, color: "#ef4444" },
-  ];
+    try {
+      const [statsRes, loansRes] = await Promise.all([
+        fetch("/api/dashboard/stats"),
+        fetch("/api/dashboard/recent-loans"),
+      ]);
+
+      const statsData = await statsRes.json();
+      const loansData = await loansRes.json();
+
+      if (statsData.success && statsData.data) {
+        setStats(statsData.data);
+      }
+
+      if (loansData.success && loansData.data) {
+        setRecentLoans(loansData.data);
+      }
+    } catch (err) {
+      console.error("Dashboard fetch error:", err);
+      setError("Không thể kết nối đến backend. Kiểm tra Lending-BE đã chạy chưa.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+    // Auto-refresh mỗi 60 giây
+    const interval = setInterval(fetchData, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Derived data for charts
+  const loanStatusDistribution = stats
+    ? [
+        { label: "Đang hoạt động", value: stats.loans.active, color: "#22c55e" },
+        { label: "Đã trả nợ", value: stats.loans.repaid, color: "#3b82f6" },
+        { label: "Quá hạn", value: stats.loans.overdue, color: "#f59e0b" },
+        { label: "Vỡ nợ", value: stats.loans.defaulted, color: "#ef4444" },
+      ]
+    : [];
+
+  const requestBarData = stats
+    ? [
+        { label: "Tổng YC", value: stats.requests.total, color: "bg-primary" },
+        { label: "Chờ duyệt", value: stats.requests.pending, color: "bg-warning" },
+        { label: "Đã cấp vốn", value: stats.requests.funded, color: "bg-success" },
+        { label: "Đang vay", value: stats.loans.active, color: "bg-info" },
+        { label: "Đã trả", value: stats.loans.repaid, color: "bg-primary" },
+        { label: "Quá hạn", value: stats.loans.overdue, color: "bg-warning" },
+        { label: "Vỡ nợ", value: stats.loans.defaulted, color: "bg-error" },
+      ]
+    : [];
+
+  const barMaxValue = requestBarData.length > 0 ? Math.max(...requestBarData.map((d) => d.value), 1) : 1;
 
   return (
     <div className="space-y-6">
@@ -186,48 +269,73 @@ export default function AdminDashboard() {
         <div>
           <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
           <p className="text-foreground-muted mt-1">
-            Xin chào, {session?.user?.email || "Admin"} ({role === "ADMIN" ? "Quản trị viên" : "Người xác minh"})
+            Xin chào, {session?.user?.name || session?.user?.email || "Admin"} ({role === "ADMIN" ? "Quản trị viên" : "Người xác minh"})
           </p>
         </div>
-        <div className="flex items-center gap-2 text-xs text-foreground-muted bg-card-bg border border-card-border rounded-lg px-3 py-2">
-          <div className="w-2 h-2 rounded-full bg-success animate-pulse" />
-          Blockchain: Đã kết nối
+        <div className="flex items-center gap-3">
+          <button
+            onClick={fetchData}
+            disabled={loading}
+            className="flex items-center gap-2 px-3 py-2 text-sm bg-card-bg border border-card-border rounded-lg hover:bg-background-tertiary transition-colors text-foreground-muted disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+            Làm mới
+          </button>
+          <div className="flex items-center gap-2 text-xs text-foreground-muted bg-card-bg border border-card-border rounded-lg px-3 py-2">
+            <div className={`w-2 h-2 rounded-full ${error ? "bg-error" : "bg-success"} animate-pulse`} />
+            {error ? "Mất kết nối" : "Backend: Đã kết nối"}
+          </div>
         </div>
       </div>
+
+      {/* Error Banner */}
+      {error && (
+        <div className="bg-error-light border border-error/20 rounded-xl p-4 text-error text-sm flex items-center gap-2">
+          <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+          <div>
+            <p className="font-medium">{error}</p>
+            <p className="text-xs mt-1 opacity-75">Đang hiển thị dữ liệu mẫu. Hãy khởi động backend bằng: cd Lending-BE && npm run start</p>
+          </div>
+        </div>
+      )}
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
         <StatCard
-          title="Tổng khoản vay"
-          value="41"
-          change="+12% so với tháng trước"
-          changeType="positive"
+          title="Tổng yêu cầu vay"
+          value={stats?.requests.total ?? "—"}
+          change={stats ? `${stats.requests.pending} đang chờ duyệt` : undefined}
+          changeType="neutral"
           icon={<FileText className="w-6 h-6 text-info" />}
           color="bg-info-light"
+          loading={loading && !stats}
         />
         <StatCard
           title="Đang chờ duyệt"
-          value="8"
-          change="3 yêu cầu mới hôm nay"
+          value={stats?.requests.pending ?? "—"}
+          change={stats ? `${stats.requests.funded} đã cấp vốn` : undefined}
           changeType="neutral"
           icon={<Clock className="w-6 h-6 text-warning" />}
           color="bg-warning-light"
+          loading={loading && !stats}
         />
         <StatCard
-          title="Đang hoạt động"
-          value="12"
-          change="+2 so với tuần trước"
+          title="Khoản vay hoạt động"
+          value={stats?.loans.active ?? "—"}
+          change={stats ? `Tổng ${stats.loans.total} khoản vay` : undefined}
           changeType="positive"
           icon={<CheckCircle className="w-6 h-6 text-success" />}
           color="bg-success-light"
+          loading={loading && !stats}
         />
         <StatCard
           title="Cần xem xét"
-          value="4"
-          change="3 quá hạn, 1 vỡ nợ"
-          changeType="negative"
+          value={stats ? stats.loans.overdue + stats.loans.defaulted : "—"}
+          change={stats ? `${stats.loans.overdue} quá hạn, ${stats.loans.defaulted} vỡ nợ` : undefined}
+          changeType={stats && (stats.loans.overdue + stats.loans.defaulted) > 0 ? "negative" : "neutral"}
           icon={<AlertTriangle className="w-6 h-6 text-error" />}
           color="bg-error-light"
+          loading={loading && !stats}
         />
       </div>
 
@@ -236,46 +344,55 @@ export default function AdminDashboard() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
           <StatCard
             title="Tổng giá trị giải ngân"
-            value="45,200 USDT"
-            change="+15% so với tháng trước"
+            value={stats ? formatAmount(stats.values.totalDisbursed) : "—"}
+            change={stats ? `Đã thu hồi: ${formatAmount(stats.values.totalRepaid)}` : undefined}
             changeType="positive"
             icon={<DollarSign className="w-6 h-6 text-success" />}
             color="bg-success-light"
+            loading={loading && !stats}
           />
           <StatCard
-            title="Người dùng hoạt động"
-            value="156"
-            change="24 đã liên kết ví"
+            title="Người dùng"
+            value={stats?.totalUsers ?? "—"}
+            change="Tổng tài khoản đã đăng ký"
             changeType="neutral"
             icon={<Users className="w-6 h-6 text-purple-500" />}
             color="bg-purple-500/10"
+            loading={loading && !stats}
           />
           <StatCard
             title="Tỷ lệ trả nợ đúng hạn"
-            value="92.3%"
-            change="+2.1% so với tháng trước"
-            changeType="positive"
+            value={stats ? `${stats.repaymentRate}%` : "—"}
+            change={stats ? `Tỷ lệ vỡ nợ: ${stats.defaultRate}%` : undefined}
+            changeType={stats && stats.repaymentRate > 80 ? "positive" : "negative"}
             icon={<TrendingUp className="w-6 h-6 text-info" />}
             color="bg-info-light"
+            loading={loading && !stats}
           />
         </div>
       )}
 
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Weekly Volume Chart */}
+        {/* Request & Loan Bar Chart */}
         <div className="bg-card-bg rounded-xl p-6 shadow-sm border border-card-border">
           <div className="flex items-center justify-between mb-5">
             <div>
               <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
                 <Banknote className="w-4 h-4 text-primary" />
-                Khoản vay tuần này
+                Tổng quan khoản vay
               </h3>
-              <p className="text-xs text-foreground-muted mt-1">Số lượng yêu cầu vay theo ngày</p>
+              <p className="text-xs text-foreground-muted mt-1">Phân bổ yêu cầu vay và khoản vay</p>
             </div>
-            <span className="text-sm font-bold text-foreground">28 tổng</span>
+            <span className="text-sm font-bold text-foreground">{stats?.loans.total ?? 0} khoản vay</span>
           </div>
-          <MiniBarChart data={weeklyData} maxValue={7} />
+          {stats ? (
+            <MiniBarChart data={requestBarData} maxValue={barMaxValue} />
+          ) : (
+            <div className="h-32 flex items-center justify-center text-foreground-subtle">
+              <Loader2 className="w-6 h-6 animate-spin" />
+            </div>
+          )}
         </div>
 
         {/* Status Distribution Donut */}
@@ -289,7 +406,13 @@ export default function AdminDashboard() {
               <p className="text-xs text-foreground-muted mt-1">Tổng quan khoản vay hiện tại</p>
             </div>
           </div>
-          <DonutChart segments={statusDistribution} />
+          {stats ? (
+            <DonutChart segments={loanStatusDistribution} />
+          ) : (
+            <div className="h-32 flex items-center justify-center text-foreground-subtle">
+              <Loader2 className="w-6 h-6 animate-spin" />
+            </div>
+          )}
         </div>
       </div>
 
@@ -299,7 +422,11 @@ export default function AdminDashboard() {
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-lg font-semibold text-foreground">Yêu cầu vay gần đây</h2>
-              <p className="text-sm text-foreground-muted mt-1">Danh sách các yêu cầu vay mới nhất trên nền tảng</p>
+              <p className="text-sm text-foreground-muted mt-1">
+                {recentLoans.length > 0
+                  ? `${recentLoans.length} yêu cầu vay đang chờ xử lý (dữ liệu thực)`
+                  : "Danh sách các yêu cầu vay mới nhất trên nền tảng"}
+              </p>
             </div>
             <a href="/admin/loans" className="px-4 py-2 text-sm font-medium text-primary hover:text-primary-hover hover:bg-primary-light rounded-lg transition-colors">
               Xem tất cả
@@ -310,17 +437,57 @@ export default function AdminDashboard() {
           <table className="w-full">
             <thead className="bg-background-tertiary">
               <tr>
-                <th className="py-3 px-4 text-left text-xs font-medium text-foreground-muted uppercase tracking-wider">Mã hồ sơ</th>
                 <th className="py-3 px-4 text-left text-xs font-medium text-foreground-muted uppercase tracking-wider">Người vay</th>
                 <th className="py-3 px-4 text-left text-xs font-medium text-foreground-muted uppercase tracking-wider">Số tiền</th>
+                <th className="py-3 px-4 text-left text-xs font-medium text-foreground-muted uppercase tracking-wider">Lãi suất</th>
+                <th className="py-3 px-4 text-left text-xs font-medium text-foreground-muted uppercase tracking-wider">Thời hạn</th>
+                <th className="py-3 px-4 text-left text-xs font-medium text-foreground-muted uppercase tracking-wider">Mục đích</th>
                 <th className="py-3 px-4 text-left text-xs font-medium text-foreground-muted uppercase tracking-wider">Trạng thái</th>
                 <th className="py-3 px-4 text-left text-xs font-medium text-foreground-muted uppercase tracking-wider">Ngày tạo</th>
               </tr>
             </thead>
             <tbody>
-              {recentCases.map((caseItem) => (
-                <RecentCaseRow key={caseItem.id} {...caseItem} />
-              ))}
+              {recentLoans.length > 0 ? (
+                recentLoans.map((loan) => {
+                  const st = statusConfig[loan.status] || { label: loan.status, color: "bg-gray-100 text-gray-600" };
+                  return (
+                    <tr key={loan.id} className="border-b border-border hover:bg-background-tertiary transition-colors">
+                      <td className="py-3 px-4">
+                        <div>
+                          <p className="text-sm font-medium text-foreground">{loan.borrowerName}</p>
+                          <p className="text-xs text-foreground-muted">{loan.borrowerEmail}</p>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-sm font-medium text-foreground">{toNum(loan.amount).toLocaleString()} USDT</td>
+                      <td className="py-3 px-4 text-sm text-foreground">{toNum(loan.interestRate)}%</td>
+                      <td className="py-3 px-4 text-sm text-foreground-muted">{toNum(loan.durationDays)} ngày</td>
+                      <td className="py-3 px-4 text-sm text-foreground-muted">{loan.purpose || "—"}</td>
+                      <td className="py-3 px-4">
+                        <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${st.color}`}>
+                          {st.label}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-sm text-foreground-muted">{formatDate(loan.createdAt)}</td>
+                    </tr>
+                  );
+                })
+              ) : (
+                <tr>
+                  <td colSpan={7} className="py-12 text-center text-foreground-subtle">
+                    {loading ? (
+                      <div className="flex items-center justify-center gap-2">
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        <span>Đang tải dữ liệu...</span>
+                      </div>
+                    ) : (
+                      <div>
+                        <FileText className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                        <p>Chưa có yêu cầu vay nào</p>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -338,7 +505,7 @@ export default function AdminDashboard() {
               </div>
               <div>
                 <p className="font-medium text-foreground">Xem hồ sơ chờ duyệt</p>
-                <p className="text-sm text-foreground-muted">8 hồ sơ đang chờ</p>
+                <p className="text-sm text-foreground-muted">{stats?.requests.pending ?? 0} hồ sơ đang chờ</p>
               </div>
             </a>
             <a href="/admin/blockchain" className="w-full flex items-center gap-3 p-3 text-left hover:bg-background-tertiary rounded-lg transition-colors">
@@ -350,39 +517,46 @@ export default function AdminDashboard() {
                 <p className="text-sm text-foreground-muted">Giám sát smart contracts</p>
               </div>
             </a>
-            <button className="w-full flex items-center gap-3 p-3 text-left hover:bg-background-tertiary rounded-lg transition-colors">
+            <a href="/admin/users" className="w-full flex items-center gap-3 p-3 text-left hover:bg-background-tertiary rounded-lg transition-colors">
               <div className="w-10 h-10 bg-warning-light rounded-lg flex items-center justify-center">
-                <AlertTriangle className="w-5 h-5 text-warning" />
+                <Users className="w-5 h-5 text-warning" />
               </div>
               <div>
-                <p className="font-medium text-foreground">Khoản vay rủi ro cao</p>
-                <p className="text-sm text-foreground-muted">4 khoản cần xem xét</p>
+                <p className="font-medium text-foreground">Quản lý người dùng</p>
+                <p className="text-sm text-foreground-muted">{stats?.totalUsers ?? 0} người dùng đã đăng ký</p>
               </div>
-            </button>
+            </a>
           </div>
         </div>
 
-        {/* Activity Feed */}
+        {/* System Info */}
         <div className="bg-card-bg rounded-xl shadow-sm border border-card-border p-6">
-          <h3 className="text-lg font-semibold text-foreground mb-4">Hoạt động gần đây</h3>
+          <h3 className="text-lg font-semibold text-foreground mb-4">Thông tin hệ thống</h3>
           <div className="space-y-4">
-            {[
-              { icon: <CheckCircle className="w-4 h-4 text-success" />, bg: "bg-success-light", text: <><span className="font-medium">LOAN-003</span> đã được cấp vốn</>, time: "15 phút trước" },
-              { icon: <DollarSign className="w-4 h-4 text-primary" />, bg: "bg-primary-light", text: <><span className="font-medium">LOAN-001</span> đã trả nợ thành công</>, time: "1 giờ trước" },
-              { icon: <Activity className="w-4 h-4 text-info" />, bg: "bg-info-light", text: <>Blockchain sync: <span className="font-medium">5 loans</span> đã đồng bộ</>, time: "2 giờ trước" },
-              { icon: <AlertTriangle className="w-4 h-4 text-warning" />, bg: "bg-warning-light", text: <><span className="font-medium">LOAN-004</span> đã quá hạn 3 ngày</>, time: "3 giờ trước" },
-              { icon: <Blocks className="w-4 h-4 text-purple-500" />, bg: "bg-purple-500/10", text: <>Event: LoanMatched — RequestID: 4</>, time: "5 giờ trước" },
-            ].map((item, i) => (
-              <div key={i} className="flex items-start gap-3">
-                <div className={`w-8 h-8 rounded-full ${item.bg} flex items-center justify-center flex-shrink-0`}>
-                  {item.icon}
-                </div>
-                <div>
-                  <p className="text-sm text-foreground">{item.text}</p>
-                  <p className="text-xs text-foreground-muted">{item.time}</p>
-                </div>
-              </div>
-            ))}
+            <div className="flex items-center justify-between py-2 border-b border-border">
+              <span className="text-sm text-foreground-muted">Backend API</span>
+              <span className={`text-sm font-medium ${error ? "text-error" : "text-success"}`}>
+                {error ? "Offline" : "Online"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between py-2 border-b border-border">
+              <span className="text-sm text-foreground-muted">Tổng khoản vay</span>
+              <span className="text-sm font-medium text-foreground">{stats?.loans.total ?? "—"}</span>
+            </div>
+            <div className="flex items-center justify-between py-2 border-b border-border">
+              <span className="text-sm text-foreground-muted">Giá trị giải ngân</span>
+              <span className="text-sm font-medium text-foreground">{stats ? formatAmount(stats.values.totalDisbursed) : "—"}</span>
+            </div>
+            <div className="flex items-center justify-between py-2 border-b border-border">
+              <span className="text-sm text-foreground-muted">Tổng lãi suất</span>
+              <span className="text-sm font-medium text-foreground">{stats ? formatAmount(stats.values.totalInterest) : "—"}</span>
+            </div>
+            <div className="flex items-center justify-between py-2">
+              <span className="text-sm text-foreground-muted">Tỷ lệ vỡ nợ</span>
+              <span className={`text-sm font-medium ${stats && stats.defaultRate > 5 ? "text-error" : "text-success"}`}>
+                {stats ? `${stats.defaultRate}%` : "—"}
+              </span>
+            </div>
           </div>
         </div>
       </div>

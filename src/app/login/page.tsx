@@ -2,7 +2,7 @@
 "use client";
 
 import { useState } from "react";
-import { signIn } from "next-auth/react";
+import { signIn, getSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, Mail, Lock, LogIn, Shield } from "lucide-react";
 
@@ -29,7 +29,14 @@ export default function LoginPage() {
       setError("Email hoặc mật khẩu không đúng");
       setIsLoading(false);
     } else {
-      router.push("/admin");
+      // Lấy session để xác định role → redirect đúng portal
+      const session = await getSession();
+      const role = session?.user?.role;
+      if (role === "VERIFIER") {
+        router.push("/verifier");
+      } else {
+        router.push("/admin");
+      }
     }
   };
 

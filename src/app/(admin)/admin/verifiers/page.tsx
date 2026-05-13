@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
 import { Pagination } from "@/components/admin/users";
@@ -14,6 +14,10 @@ import {
 export default function VerifiersPage() {
   const router = useRouter();
 
+  // Data states
+  const [verifiers, setVerifiers] = useState<Verifier[]>([]);
+  const [loading, setLoading] = useState(true);
+
   // Filter states
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("All Statuses");
@@ -23,9 +27,45 @@ export default function VerifiersPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
 
+  // Fetch verifiers from DB
+  const fetchVerifiers = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/users?role=verifier&limit=100");
+      const data = await res.json();
+      if (data.success && data.data?.items) {
+        // Map database users to Verifier interface
+        const mappedVerifiers: Verifier[] = data.data.items.map((u: any) => ({
+          id: u.id,
+          name: u.name,
+          email: u.email,
+          status: u.status === "Active" ? "Active" : "Inactive",
+          department: "General", // Default as DB doesn't have department yet
+          joinedDate: u.registeredDate,
+          lastActive: "Active now",
+          stats: {
+            totalReviews: 0,
+            pendingCases: 0,
+            approvalRate: 0,
+            avgReviewTime: "N/A",
+          },
+        }));
+        setVerifiers(mappedVerifiers);
+      }
+    } catch (err) {
+      console.error("Failed to fetch verifiers:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchVerifiers();
+  }, []);
+
   // Filter verifiers
   const filteredVerifiers = useMemo(() => {
-    return mockVerifiers.filter((verifier) => {
+    return verifiers.filter((verifier) => {
       const searchLower = searchQuery.toLowerCase();
       const matchesSearch =
         !searchQuery ||
@@ -41,7 +81,7 @@ export default function VerifiersPage() {
 
       return matchesSearch && matchesStatus && matchesDepartment;
     });
-  }, [searchQuery, statusFilter, departmentFilter]);
+  }, [verifiers, searchQuery, statusFilter, departmentFilter]);
 
   // Paginated verifiers
   const paginatedVerifiers = useMemo(() => {
@@ -103,27 +143,30 @@ export default function VerifiersPage() {
       <div className="grid grid-cols-4 gap-4">
         <div className="bg-card-bg border border-card-border rounded-xl p-4">
           <p className="text-sm text-foreground-muted">Total Verifiers</p>
-          <p className="text-2xl font-bold text-foreground mt-1">{mockVerifiers.length}</p>
+          <p className="text-2xl font-bold text-foreground mt-1">
+            {loading ? "—" : verifiers.length}
+          </p>
         </div>
         <div className="bg-card-bg border border-card-border rounded-xl p-4">
           <p className="text-sm text-foreground-muted">Active Now</p>
           <p className="text-2xl font-bold text-success mt-1">
-            {mockVerifiers.filter((v) => v.status === "Active").length}
+            {loading ? "—" : verifiers.filter((v) => v.status === "Active").length}
           </p>
         </div>
         <div className="bg-card-bg border border-card-border rounded-xl p-4">
           <p className="text-sm text-foreground-muted">Total Pending Cases</p>
           <p className="text-2xl font-bold text-warning mt-1">
-            {mockVerifiers.reduce((sum, v) => sum + v.stats.pendingCases, 0)}
+            {loading ? "—" : verifiers.reduce((sum, v) => sum + v.stats.pendingCases, 0)}
           </p>
         </div>
         <div className="bg-card-bg border border-card-border rounded-xl p-4">
           <p className="text-sm text-foreground-muted">Avg Approval Rate</p>
           <p className="text-2xl font-bold text-foreground mt-1">
-            {Math.round(
-              mockVerifiers.reduce((sum, v) => sum + v.stats.approvalRate, 0) / mockVerifiers.length
-            )}
-            %
+            {loading || verifiers.length === 0
+              ? "—"
+              : Math.round(
+                  verifiers.reduce((sum, v) => sum + v.stats.approvalRate, 0) / verifiers.length
+                ) + "%"}
           </p>
         </div>
       </div>

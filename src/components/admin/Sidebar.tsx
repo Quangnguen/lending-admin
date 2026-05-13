@@ -145,19 +145,19 @@ export default function Sidebar() {
           <div className="flex justify-center">
             <div 
               className="w-8 h-8 bg-primary rounded-full flex items-center justify-center text-primary-foreground text-sm font-medium"
-              title={session?.user?.email}
+              title={session?.user?.name || session?.user?.email}
             >
-              {session?.user?.email?.charAt(0).toUpperCase()}
+              {(session?.user?.name || session?.user?.email)?.charAt(0).toUpperCase()}
             </div>
           </div>
         ) : (
           <div className="flex items-center gap-3 px-4 py-3 bg-background-tertiary rounded-lg">
             <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center text-primary-foreground text-sm font-medium">
-              {session?.user?.email?.charAt(0).toUpperCase()}
+              {(session?.user?.name || session?.user?.email)?.charAt(0).toUpperCase()}
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-foreground truncate">
-                {session?.user?.email}
+                {session?.user?.name || session?.user?.email}
               </p>
               <p className="text-xs text-foreground-subtle">
                 {isAdmin ? "Quản trị viên" : "Người xác minh"}
