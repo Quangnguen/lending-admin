@@ -136,14 +136,23 @@ export default function UserDetailPage() {
           </div>
           <div className="col-span-4 space-y-6">
             <AdminActions
+              userId={userId}
               isHighRisk={user.isHighRisk}
               status={user.status}
+              kycStatus={user.kycDetails?.kycStatus}
               onResetPassword={() => {}}
               onViewLogs={() => setActiveTab("cases")}
-              onReKYC={() => {}}
               onLockAccount={() => {}}
               onSuspend={() => {}}
               onToggleHighRisk={() => {}}
+              onReKYCSuccess={() => {
+                // Reload user data sau khi Re-KYC thành công
+                setLoading(true);
+                fetch(`/api/admin/users/${userId}`)
+                  .then((r) => r.json())
+                  .then((data) => { if (data.success && data.data) setUser(data.data); })
+                  .finally(() => setLoading(false));
+              }}
             />
             <PersonalDetailsCard details={user.personalDetails} />
           </div>
@@ -153,7 +162,10 @@ export default function UserDetailPage() {
       {activeTab === "kyc" && (
         <div className="grid grid-cols-12 gap-6">
           <div className="col-span-8 space-y-6">
-            <KYCVerificationStatus kycLevel={user.kycLevel} verificationItems={user.kycVerificationItems} />
+            <KYCVerificationStatus
+              kycDetails={user.kycDetails}
+              userId={userId}
+            />
             <ActiveLoansTable loans={user.activeLoans} />
           </div>
           <div className="col-span-4 space-y-6">

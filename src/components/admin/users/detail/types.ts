@@ -40,10 +40,13 @@ export interface KYCVerificationItem {
 export interface UploadedDocument {
   id: string;
   name: string;
-  size: string;
-  uploadedDate: string;
-  type: "pdf" | "jpg" | "png";
+  size?: string;
+  uploadedDate?: string;
+  uploadedAt?: string;
+  url?: string;
+  type: "pdf" | "jpg" | "png" | "id_front" | "id_back" | "selfie" | string;
 }
+
 
 export interface ActiveLoan {
   id: string;

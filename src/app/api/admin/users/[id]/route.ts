@@ -87,6 +87,21 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     }
     console.log("[Admin User Detail] Final creditScore:", creditScore, "rating:", creditRating);
 
+    // 3b. Fetch KYC record đầy đủ (OCR data + ảnh)
+    let kycRecord: any = null;
+    try {
+      const kycData = await fetchBackend(`/kyc/admin/details/${userId}`, token);
+      console.log("[KYC DEBUG] Raw kycData:", JSON.stringify(kycData));
+      console.log("[KYC DEBUG] kycData type:", typeof kycData);
+      console.log("[KYC DEBUG] kycData keys:", kycData ? Object.keys(kycData) : "NULL");
+      console.log("[KYC DEBUG] frontIdImageUrl:", kycData?.frontIdImageUrl);
+      console.log("[KYC DEBUG] status:", kycData?.status);
+      if (kycData) kycRecord = kycData;
+    } catch (e) {
+      console.warn("[Admin User Detail] KYC details fetch error:", e);
+    }
+    console.log("[KYC DEBUG] Final kycRecord:", JSON.stringify(kycRecord));
+
     // 3. Fetch loans của user (borrower + lender)
     let allLoans: any[] = [];
     let activeLoans: any[] = [];
@@ -242,13 +257,43 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         percentile: creditScore > 0 ? Math.round((creditScore / 1000) * 100) : 0,
       },
       kycDetails: {
-        lastUpdated: rawUser.kycVerifiedAt ? fmtDate(rawUser.kycVerifiedAt) : fmtDate(rawUser.updatedAt),
-        identityVerified: kycStatusRaw === "verified",
-        identityMethod: kycStatusRaw === "verified" ? "Xác thực CCCD/Hộ chiếu" : undefined,
-        addressVerified: kycStatusRaw === "verified",
-        addressMethod: kycStatusRaw === "verified" ? "Đã xác minh địa chỉ" : undefined,
+        lastUpdated: kycRecord?.completedAt
+          ? fmtDate(kycRecord.completedAt)
+          : rawUser.kycVerifiedAt
+            ? fmtDate(rawUser.kycVerifiedAt)
+            : fmtDate(rawUser.updatedAt),
+        identityVerified: kycStatusRaw === "verified" || kycRecord?.status === "COMPLETED",
+        identityMethod: (kycStatusRaw === "verified" || kycRecord?.status === "COMPLETED")
+          ? (kycRecord?.idInfo?.type === "CMND" ? "CMND" : "CCCD")
+          : undefined,
+        addressVerified: kycStatusRaw === "verified" || kycRecord?.status === "COMPLETED",
+        addressMethod: (kycStatusRaw === "verified" || kycRecord?.status === "COMPLETED")
+          ? "Đã xác minh địa chỉ"
+          : undefined,
         videoInterview: false,
         videoNote: "Không yêu cầu",
+        // ── Dữ liệu OCR từ CCCD ──
+        idNumber: kycRecord?.idInfo?.id || null,
+        fullName: kycRecord?.idInfo?.name || null,
+        dob: kycRecord?.idInfo?.dob || null,
+        sex: kycRecord?.idInfo?.sex || null,
+        nationality: kycRecord?.idInfo?.nationality || null,
+        home: kycRecord?.idInfo?.home || null,
+        address: kycRecord?.idInfo?.address || null,
+        doe: kycRecord?.idInfo?.doe || null,
+        issueDate: kycRecord?.idInfo?.issue_date || null,
+        issueLoc: kycRecord?.idInfo?.issue_loc || null,
+        idType: kycRecord?.idInfo?.type || null,
+        features: kycRecord?.idInfo?.features || null,
+        // ── Ảnh ──
+        frontIdImageUrl: kycRecord?.frontIdImageUrl || null,
+        backIdImageUrl: kycRecord?.backIdImageUrl || null,
+        selfieImageUrl: kycRecord?.selfieImageUrl || null,
+        faceMatchScore: kycRecord?.faceMatchScore || null,
+        // ── Re-KYC ──
+        kycStatus: kycRecord?.status || null,
+        reKycReason: kycRecord?.reKycReason || null,
+        reKycRequestedAt: kycRecord?.reKycRequestedAt ? fmtDate(kycRecord.reKycRequestedAt) : null,
       },
       kycVerificationItems: [
         {
@@ -270,7 +315,29 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           verifiedDate: rawUser.kycVerifiedAt ? fmtDate(rawUser.kycVerifiedAt) : undefined,
         },
       ],
-      uploadedDocuments: [],
+      uploadedDocuments: [
+        ...(kycRecord?.frontIdImageUrl ? [{
+          id: "doc-front",
+          type: "id_front",
+          name: "CCCD/CMND Mặt trước",
+          url: kycRecord.frontIdImageUrl,
+          uploadedAt: kycRecord?.completedAt ? fmtDate(kycRecord.completedAt) : "—",
+        }] : []),
+        ...(kycRecord?.backIdImageUrl ? [{
+          id: "doc-back",
+          type: "id_back",
+          name: "CCCD/CMND Mặt sau",
+          url: kycRecord.backIdImageUrl,
+          uploadedAt: kycRecord?.completedAt ? fmtDate(kycRecord.completedAt) : "—",
+        }] : []),
+        ...(kycRecord?.selfieImageUrl ? [{
+          id: "doc-selfie",
+          type: "selfie",
+          name: "Ảnh selfie xác thực",
+          url: kycRecord.selfieImageUrl,
+          uploadedAt: kycRecord?.completedAt ? fmtDate(kycRecord.completedAt) : "—",
+        }] : []),
+      ],
       activeLoans,
       loanDetails,
       loanSummary,
