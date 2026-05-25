@@ -198,8 +198,16 @@ export default function AdminDashboard() {
   const { data: session } = useSession();
   const role = session?.user?.role;
 
+  interface DashboardAlert {
+    type: string;
+    count: number;
+    message: string;
+    severity: "high" | "medium" | "low";
+  }
+
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [recentLoans, setRecentLoans] = useState<RecentLoan[]>([]);
+  const [alerts, setAlerts] = useState<DashboardAlert[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -208,9 +216,10 @@ export default function AdminDashboard() {
     setError(null);
 
     try {
-      const [statsRes, loansRes] = await Promise.all([
+      const [statsRes, loansRes, alertsRes] = await Promise.all([
         fetch("/api/dashboard/stats"),
         fetch("/api/dashboard/recent-loans"),
+        fetch("/api/admin/dashboard/alerts").catch(() => null),
       ]);
 
       const statsData = await statsRes.json();
@@ -222,6 +231,13 @@ export default function AdminDashboard() {
 
       if (loansData.success && loansData.data) {
         setRecentLoans(loansData.data);
+      }
+
+      if (alertsRes) {
+        const alertsData = await alertsRes.json().catch(() => ({}));
+        if (alertsData.success && Array.isArray(alertsData.alerts)) {
+          setAlerts(alertsData.alerts);
+        }
       }
     } catch (err) {
       console.error("Dashboard fetch error:", err);
@@ -369,6 +385,38 @@ export default function AdminDashboard() {
             color="bg-info-light"
             loading={loading && !stats}
           />
+        </div>
+      )}
+
+      {/* Alerts Panel — only shows when there are active alerts */}
+      {role === "ADMIN" && alerts.length > 0 && (
+        <div className="bg-card-bg rounded-xl border border-amber-300/50 dark:border-amber-700/50 overflow-hidden">
+          <div className="flex items-center gap-2 px-5 py-3 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200/60 dark:border-amber-700/40">
+            <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+            <h3 className="text-sm font-semibold text-amber-700 dark:text-amber-300">
+              Cảnh báo hệ thống ({alerts.length})
+            </h3>
+          </div>
+          <div className="divide-y divide-border">
+            {alerts.map((alert, i) => (
+              <div key={i} className="flex items-center gap-4 px-5 py-3">
+                <span className={`w-2 h-2 rounded-full shrink-0 ${
+                  alert.severity === "high" ? "bg-red-500" :
+                  alert.severity === "medium" ? "bg-amber-400" : "bg-blue-400"
+                }`} />
+                <p className="text-sm text-foreground flex-1">{alert.message}</p>
+                {alert.count > 0 && (
+                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                    alert.severity === "high"
+                      ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                      : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                  }`}>
+                    {alert.count}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

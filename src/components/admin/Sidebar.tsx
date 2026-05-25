@@ -18,6 +18,7 @@ import {
   UserCheck,
   Banknote,
   Blocks,
+  Bell,
 } from "lucide-react";
 
 interface NavItemProps {
@@ -65,6 +66,7 @@ export default function Sidebar() {
     { href: "/admin/loans", icon: <Banknote className="w-5 h-5" />, label: "Quản lý khoản vay" },
     { href: "/admin/blockchain", icon: <Blocks className="w-5 h-5" />, label: "Blockchain Monitor" },
     { href: "/admin/verifiers", icon: <UserCheck className="w-5 h-5" />, label: "Quản lý Verifier" },
+    { href: "/admin/notifications", icon: <Bell className="w-5 h-5" />, label: "Thông báo" },
     { href: "/admin/settings", icon: <Settings className="w-5 h-5" />, label: "Cài đặt" },
     { href: "/admin/audit-logs", icon: <ClipboardList className="w-5 h-5" />, label: "Nhật ký hệ thống" },
   ];

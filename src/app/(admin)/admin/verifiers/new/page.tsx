@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ChevronDown, Eye, EyeOff } from "lucide-react";
+import { ArrowLeft, ChevronDown, Eye, EyeOff, AlertTriangle, CheckCircle, RefreshCw } from "lucide-react";
 
 interface FormData {
   fullName: string;
@@ -30,6 +30,7 @@ export default function CreateVerifierPage() {
   const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitResult, setSubmitResult] = useState<{ success: boolean; message: string } | null>(null);
 
   const roles = ["Verifier", "Senior Verifier", "Lead Verifier"];
   const statuses = ["Active", "Inactive"];
@@ -40,32 +41,44 @@ export default function CreateVerifierPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Validation
-    if (!formData.fullName || !formData.email || !formData.password) {
-      alert("Please fill in all required fields");
+    setSubmitResult(null);
+
+    if (!formData.fullName.trim() || !formData.email.trim() || !formData.password) {
+      setSubmitResult({ success: false, message: "Vui lòng điền đầy đủ Họ tên, Email và Mật khẩu" });
       return;
     }
-
     if (formData.password !== formData.confirmPassword) {
-      alert("Passwords do not match");
+      setSubmitResult({ success: false, message: "Mật khẩu xác nhận không khớp" });
       return;
     }
-
     if (formData.password.length < 8) {
-      alert("Password must be at least 8 characters");
+      setSubmitResult({ success: false, message: "Mật khẩu phải có ít nhất 8 ký tự" });
       return;
     }
 
     setIsSubmitting(true);
-    
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    
-    console.log("Creating verifier:", formData);
-    
-    // Redirect to verifiers list
-    router.push("/admin/verifiers");
+    try {
+      const res = await fetch("/api/admin/verifiers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fullName: formData.fullName.trim(),
+          email: formData.email.trim(),
+          password: formData.password,
+        }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        setSubmitResult({ success: true, message: `Tài khoản Verifier "${formData.fullName}" đã được tạo thành công!` });
+        setTimeout(() => router.push("/admin/verifiers"), 1500);
+      } else {
+        setSubmitResult({ success: false, message: json.error || json.message || "Tạo tài khoản thất bại" });
+      }
+    } catch (err) {
+      setSubmitResult({ success: false, message: "Lỗi kết nối server" });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleCancel = () => {
@@ -91,6 +104,20 @@ export default function CreateVerifierPage() {
           initial security credentials.
         </p>
       </div>
+
+      {/* Submit result banner */}
+      {submitResult && (
+        <div className={`rounded-xl px-4 py-3 flex items-center gap-3 text-sm font-medium mb-6 ${
+          submitResult.success
+            ? "bg-green-50 text-green-700 border border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-800"
+            : "bg-red-50 text-red-700 border border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800"
+        }`}>
+          {submitResult.success
+            ? <CheckCircle className="w-4 h-4 shrink-0" />
+            : <AlertTriangle className="w-4 h-4 shrink-0" />}
+          {submitResult.message}
+        </div>
+      )}
 
       {/* Form */}
       <form onSubmit={handleSubmit}>
