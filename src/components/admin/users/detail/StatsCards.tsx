@@ -11,6 +11,7 @@ const riskLevelColors: Record<UserStats["riskLevel"], string> = {
   Low: "text-success",
   Medium: "text-warning",
   High: "text-error",
+  "N/A": "text-foreground-muted",
 };
 
 export default function StatsCards({ stats }: StatsCardsProps) {

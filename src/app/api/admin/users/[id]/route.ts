@@ -102,21 +102,16 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     }
     console.log("[KYC DEBUG] Final kycRecord:", JSON.stringify(kycRecord));
 
-    // 3. Fetch loans của user (borrower + lender)
+    // 3. Fetch loans của user — dùng admin endpoint để lấy đúng user, không phải admin
     let allLoans: any[] = [];
     let activeLoans: any[] = [];
     let loanSummary = { totalBorrowed: 0, totalRepaid: 0, outstanding: 0 };
     try {
-      // Lấy tất cả loans trong hệ thống rồi filter theo userId
-      const loansData = await fetchBackend(`/loans/`, token);
-      const rawLoans = loansData?.data || loansData || [];
+      const loansData = await fetchBackend(`/loans/admin/user/${userId}/loans`, token);
+      const rawLoans = Array.isArray(loansData) ? loansData : (loansData?.data || []);
       if (Array.isArray(rawLoans)) {
-        allLoans = rawLoans.filter((l: any) => {
-          const bId = l.borrowerId?._id || l.borrowerId;
-          const lId = l.lenderId?._id || l.lenderId;
-          return String(bId) === userId || String(lId) === userId;
-        });
-        
+        allLoans = rawLoans;
+
         activeLoans = allLoans
           .filter((l: any) => l.status === "active" || l.status === "overdue")
           .slice(0, 5)
@@ -135,25 +130,21 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       }
     } catch (_e) { /* loans optional */ }
 
-    // 4. Fetch loan requests của user
+    // 4. Fetch loan requests của user — dùng admin endpoint
     let loanRequests: any[] = [];
     try {
-      const reqData = await fetchBackend(`/loans/requests/`, token);
-      const rawReqs = reqData?.data || reqData || [];
+      const reqData = await fetchBackend(`/loans/admin/user/${userId}/requests`, token);
+      const rawReqs = Array.isArray(reqData) ? reqData : (reqData?.data || []);
       if (Array.isArray(rawReqs)) {
-        loanRequests = rawReqs.filter((r: any) => {
-          const bId = r.borrowerId?._id || r.borrowerId;
-          return String(bId) === userId;
-        });
+        loanRequests = rawReqs;
       }
     } catch (_e) { /* requests optional */ }
 
-    // 5. Fetch transactions
+    // 5. Fetch transactions của user — dùng admin endpoint
     let transactions: any[] = [];
     try {
-      // Lấy repayments liên quan đến user
-      const txData = await fetchBackend(`/loans/transactions/my`, token);
-      const rawTx = txData?.data || txData || [];
+      const txData = await fetchBackend(`/loans/admin/user/${userId}/transactions`, token);
+      const rawTx = Array.isArray(txData) ? txData : (txData?.data || []);
       if (Array.isArray(rawTx)) {
         transactions = rawTx.slice(0, 10);
       }
@@ -226,35 +217,63 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         : kycStatusRaw === "pending" ? "Pending Review"
           : "N/A (Internal)";
 
+    // Fallback credit score từ user model khi credit service trả 0
+    const effectiveCreditScore = creditScore > 0 ? creditScore : (toNum(rawUser.creditScore) || 0);
+
+    // Map status: user model có active/suspended/banned
+    const statusMap: Record<string, string> = {
+      active: "Active",
+      suspended: "Suspended",
+      banned: "Suspended", // banned cũng hiển thị Suspended ở FE (Locked là UI state)
+    };
+    const mappedStatus = statusMap[rawUser.status] || "Pending";
+
+    // totalBorrowed: ưu tiên tính từ loans thực tế, fallback sang user.totalBorrowed
+    const effectiveTotalBorrowed = loanSummary.totalBorrowed > 0
+      ? loanSummary.totalBorrowed
+      : toNum(rawUser.totalBorrowed);
+
+    // personalDetails: ưu tiên user model, fallback KYC OCR data
+    const kycDob = kycRecord?.idInfo?.dob || null;
+    const kycNationality = kycRecord?.idInfo?.nationality || null;
+    const kycAddress = kycRecord?.idInfo?.address || null;
+
     const userDetail = {
       id: userId,
       name: rawUser.fullName || rawUser.email,
       email: rawUser.email,
       role: rawUser.role === "admin" || rawUser.role === "super_admin" ? "Admin" : rawUser.role === "verifier" ? "Verifier" : "Borrower",
-      status: rawUser.status === "active" ? "Active" : rawUser.status === "suspended" ? "Suspended" : "Pending",
+      status: mappedStatus,
       kycStatus,
       kycLevel: kycStatusRaw === "verified" ? 3 : kycStatusRaw === "pending" ? 2 : 1,
       registeredDate: fmtDate(rawUser.createdAt),
-      isHighRisk: false,
-      creditScore,
+      isHighRisk: rawUser.isHighRisk || false,
+      creditScore: effectiveCreditScore,
       creditRating,
       loanLimit,
       creditCalculatedAt: creditCalcAt,
       personalDetails: {
         fullName: rawUser.fullName || rawUser.email,
         phone: rawUser.phone || "—",
-        dateOfBirth: rawUser.dateOfBirth ? fmtDate(rawUser.dateOfBirth) : "—",
-        nationality: rawUser.nationality || "Việt Nam",
-        address: rawUser.address || rawUser.permanentAddress || "—",
+        dateOfBirth: rawUser.dateOfBirth
+          ? fmtDate(rawUser.dateOfBirth)
+          : kycDob || "—",
+        nationality: rawUser.nationality || rawUser.country || kycNationality || "Việt Nam",
+        address: rawUser.address || kycAddress || "—",
       },
       stats: {
-        totalBorrowed: loanSummary.totalBorrowed,
+        totalBorrowed: effectiveTotalBorrowed,
         activeLoans: activeLoans.length,
         totalLoans: allLoans.length + loanRequests.length,
-        nextPaymentDays: 0,
-        riskScore: creditScore > 0 ? Math.round((creditScore / 1000) * 100) : 0,
-        riskLevel: creditScore === 0 ? "N/A" : creditScore >= 700 ? "Low" : creditScore >= 500 ? "Medium" : "High",
-        percentile: creditScore > 0 ? Math.round((creditScore / 1000) * 100) : 0,
+        nextPaymentDays: (() => {
+          const activeLoan = allLoans.find((l: any) => l.status === "active" || l.status === "overdue");
+          if (!activeLoan?.dueDate) return 0;
+          const diff = Math.ceil((new Date(activeLoan.dueDate).getTime() - Date.now()) / 86400000);
+          return diff > 0 ? diff : 0;
+        })(),
+        riskScore: effectiveCreditScore > 0 ? Math.round((effectiveCreditScore / 1000) * 100) : 0,
+        riskLevel: effectiveCreditScore === 0 ? "N/A" : effectiveCreditScore >= 700 ? "Low" : effectiveCreditScore >= 500 ? "Medium" : "High",
+        percentile: effectiveCreditScore > 0 ? Math.round((effectiveCreditScore / 1000) * 100) : 0,
       },
       kycDetails: {
         lastUpdated: kycRecord?.completedAt

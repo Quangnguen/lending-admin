@@ -10,6 +10,10 @@ export interface UserDetail {
   kycLevel: 1 | 2 | 3;
   registeredDate: string;
   isHighRisk: boolean;
+  creditScore?: number;
+  creditRating?: string;
+  loanLimit?: number;
+  creditCalculatedAt?: string | null;
   personalDetails: PersonalDetails;
   stats: UserStats;
   kycDetails: KYCDetails;
@@ -88,7 +92,7 @@ export interface UserStats {
   totalLoans: number;
   nextPaymentDays: number;
   riskScore: number;
-  riskLevel: "Low" | "Medium" | "High";
+  riskLevel: "Low" | "Medium" | "High" | "N/A";
   percentile?: number;
 }
 
@@ -100,6 +104,28 @@ export interface KYCDetails {
   addressMethod?: string;
   videoInterview: boolean;
   videoNote?: string;
+  // OCR data từ CCCD
+  idNumber?: string | null;
+  fullName?: string | null;
+  dob?: string | null;
+  sex?: string | null;
+  nationality?: string | null;
+  home?: string | null;
+  address?: string | null;
+  doe?: string | null;
+  issueDate?: string | null;
+  issueLoc?: string | null;
+  idType?: string | null;
+  features?: string | null;
+  // Ảnh KYC
+  frontIdImageUrl?: string | null;
+  backIdImageUrl?: string | null;
+  selfieImageUrl?: string | null;
+  faceMatchScore?: number | null;
+  // Re-KYC
+  kycStatus?: string | null;
+  reKycReason?: string | null;
+  reKycRequestedAt?: string | null;
 }
 
 export interface LoanRecord {
